@@ -67,6 +67,7 @@ import { ReconnectionModal } from './components/ReconnectionModal';
 import { Tabs, TabItem } from './components/Tabs';
 import { FileHistoryList } from './components/FileHistoryList';
 import { ChatTab } from './components/ChatTab';
+import { TabLockModal } from './components/TabLockModal';
 import TechPage from './components/TechPage';
 import FAQPage from './components/FAQPage';
 import InfoPage from './components/InfoPage';
@@ -107,6 +108,7 @@ const App: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState('history');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isTabLocked, setIsTabLocked] = useState(false);
 
   const [tabBadges, setTabBadges] = useState<Record<string, number>>({ analytics: 0, storage: 0, history: 0, chat: 0 });
   const [lastTabUpdates, setLastTabUpdates] = useState<Record<string, number>>({});
@@ -140,6 +142,7 @@ const App: React.FC = () => {
   const activeTransfersRef = useRef<TransferItem[]>([]);
   const connectedPeersRef = useRef<PeerInfo[]>([]);
   const lastProgressUpdate = useRef<Record<string, number>>({});
+  const isTabLockedRef = useRef(isTabLocked);
   
   // Retry logic refs
   const initRetryCount = useRef(0);
@@ -160,6 +163,54 @@ const App: React.FC = () => {
   useEffect(() => {
     currentIdRef.current = myId;
   }, [myId]);
+
+  useEffect(() => {
+    isTabLockedRef.current = isTabLocked;
+  }, [isTabLocked]);
+
+  // Tab Lock Logic
+  useEffect(() => {
+    const channel = new BroadcastChannel('nw_tab_lock');
+    
+    const handleMessage = (e: MessageEvent) => {
+        if (e.data.type === 'PING') {
+            // If we are active (not locked), tell the new tab to lock
+            if (!isTabLockedRef.current) {
+                channel.postMessage({ type: 'PONG' });
+            }
+        } else if (e.data.type === 'PONG') {
+            // Existing tab found, lock myself
+            setIsTabLocked(true);
+            peerService.destroy(); 
+            setConnectedPeers([]);
+        } else if (e.data.type === 'TAKEOVER') {
+            // User switched to another tab, lock myself
+            setIsTabLocked(true);
+            peerService.destroy();
+            setConnectedPeers([]);
+        }
+    };
+
+    channel.addEventListener('message', handleMessage);
+    channel.postMessage({ type: 'PING' });
+
+    return () => {
+        channel.removeEventListener('message', handleMessage);
+        channel.close();
+    };
+  }, []);
+
+  const handleTakeover = () => {
+    setIsTabLocked(false);
+    const channel = new BroadcastChannel('nw_tab_lock');
+    channel.postMessage({ type: 'TAKEOVER' });
+    channel.close();
+    
+    // Re-init
+    if (myId) {
+        peerService.initialize(myId);
+    }
+  };
 
   useEffect(() => {
     if (darkMode) {
@@ -705,12 +756,12 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (myId) {
+    if (myId && !isTabLocked) {
       initRetryCount.current = 0;
       peerService.initialize(myId);
       return () => peerService.destroy();
     }
-  }, [myId]);
+  }, [myId, isTabLocked]);
 
   useEffect(() => {
     if (!myId) return;
@@ -803,6 +854,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#050505] text-slate-900 dark:text-slate-100 relative overflow-x-hidden selection:bg-violet-500/30 transition-colors duration-300">
+      {isTabLocked && <TabLockModal onTakeover={handleTakeover} />}
       <style>{`@keyframes spin-slow{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}.animate-spin-slow{animation:spin-slow 8s linear infinite}@keyframes float{0%,100%{transform:translateY(0px) rotate(0deg)}50%{transform:translateY(-20px) rotate(5deg)}}.animate-float{animation:float 6s ease-in-out infinite}.animate-float-delayed{animation:float 7s ease-in-out 2s infinite}@keyframes shimmer{0%{transform:translateX(-150%) skewX(-12deg)}30%{transform:translateX(150%) skewX(-12deg)}100%{transform:translateX(150%) skewX(-12deg)}}.animate-shimmer{animation:shimmer 3s infinite}@keyframes text-shimmer{0%{background-position:0% 50%}100%{background-position:100% 50%}}.animate-text-shimmer{background:linear-gradient(to right,#0f172a 20%,#475569 40%,#94a3b8 50%,#475569 60%,#0f172a 80%);background-size:200% auto;color:#000;background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:text-shimmer 8s linear infinite}.dark .animate-text-shimmer{background:linear-gradient(to right,#ffffff 20%,#94a3b8 40%,#475569 50%,#94a3b8 60%,#ffffff 80%);background-size:200% auto;color:#fff;background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:text-shimmer 8s linear infinite}`}</style>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <ReconnectionModal candidates={reconnectCandidates} onReconnect={handleReconnect} onDiscard={handleDiscardReconnect} />
