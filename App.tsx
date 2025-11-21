@@ -140,6 +140,10 @@ const App: React.FC = () => {
   const activeTransfersRef = useRef<TransferItem[]>([]);
   const connectedPeersRef = useRef<PeerInfo[]>([]);
   const lastProgressUpdate = useRef<Record<string, number>>({});
+  
+  // Retry logic refs
+  const initRetryCount = useRef(0);
+  const currentIdRef = useRef(myId);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -152,6 +156,10 @@ const App: React.FC = () => {
   useEffect(() => {
     activeTransfersRef.current = activeTransfers;
   }, [activeTransfers]);
+
+  useEffect(() => {
+    currentIdRef.current = myId;
+  }, [myId]);
 
   useEffect(() => {
     if (darkMode) {
@@ -308,6 +316,7 @@ const App: React.FC = () => {
 
   const regenerateIdentity = (name: string, silent: boolean = false) => {
     setIsRegeneratingId(true);
+    initRetryCount.current = 0;
     const newId = generatePeerId();
     setMyId(newId);
     localStorage.setItem('nw_identity', JSON.stringify({ id: newId, name, createdAt: Date.now() }));
@@ -697,6 +706,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (myId) {
+      initRetryCount.current = 0;
       peerService.initialize(myId);
       return () => peerService.destroy();
     }
@@ -756,7 +766,18 @@ const App: React.FC = () => {
       (err) => {
         setIsConnecting(false);
         if (err === 'ID Unavailable or Invalid' || err.includes("unavailable")) {
-             regenerateIdentity(myName, true);
+             if (initRetryCount.current < 2) {
+                 initRetryCount.current++;
+                 addToast('warning', 'Session Restore', `Retrying connection (${initRetryCount.current}/2)...`);
+                 setTimeout(() => {
+                     if (currentIdRef.current === myId) {
+                        peerService.initialize(myId);
+                     }
+                 }, 1500);
+             } else {
+                 regenerateIdentity(myName, true);
+                 addToast('info', 'New Session', 'Previous ID was stuck, assigned new identity.');
+             }
         } else if (err === 'Initialization Failed') {
              addToast('error', 'System Error', 'Connection system failed to start. Retrying automatically...');
         } else {
