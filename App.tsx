@@ -143,6 +143,7 @@ const App: React.FC = () => {
   const connectedPeersRef = useRef<PeerInfo[]>([]);
   const lastProgressUpdate = useRef<Record<string, number>>({});
   const isTabLockedRef = useRef(isTabLocked);
+  const tabId = useRef(crypto.randomUUID());
   
   // Retry logic refs
   const initRetryCount = useRef(0);
@@ -173,26 +174,27 @@ const App: React.FC = () => {
     const channel = new BroadcastChannel('nw_tab_lock');
     
     const handleMessage = (e: MessageEvent) => {
+        // Ignore own messages to prevent feedback loops
+        if (e.data?.senderId === tabId.current) return;
+
         if (e.data.type === 'PING') {
             // If we are active (not locked), tell the new tab to lock
             if (!isTabLockedRef.current) {
-                channel.postMessage({ type: 'PONG' });
+                channel.postMessage({ type: 'PONG', senderId: tabId.current });
             }
         } else if (e.data.type === 'PONG') {
             // Existing tab found, lock myself
             setIsTabLocked(true);
-            peerService.destroy(); 
             setConnectedPeers([]);
         } else if (e.data.type === 'TAKEOVER') {
             // User switched to another tab, lock myself
             setIsTabLocked(true);
-            peerService.destroy();
             setConnectedPeers([]);
         }
     };
 
     channel.addEventListener('message', handleMessage);
-    channel.postMessage({ type: 'PING' });
+    channel.postMessage({ type: 'PING', senderId: tabId.current });
 
     return () => {
         channel.removeEventListener('message', handleMessage);
@@ -203,10 +205,11 @@ const App: React.FC = () => {
   const handleTakeover = () => {
     setIsTabLocked(false);
     const channel = new BroadcastChannel('nw_tab_lock');
-    channel.postMessage({ type: 'TAKEOVER' });
+    // Send senderId so we don't receive our own takeover message
+    channel.postMessage({ type: 'TAKEOVER', senderId: tabId.current });
     channel.close();
     
-    // Re-init
+    // Re-init if we have an ID
     if (myId) {
         peerService.initialize(myId);
     }
