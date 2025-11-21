@@ -11,6 +11,14 @@ class PeerService {
   private reconnectInterval: any = null;
   private isDestroyed: boolean = false;
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+        window.addEventListener('beforeunload', () => {
+            this.destroy();
+        });
+    }
+  }
+
   initialize(myId: string) {
     if (this.peer) {
         if (this.peer.id === myId && !this.peer.destroyed) return;
